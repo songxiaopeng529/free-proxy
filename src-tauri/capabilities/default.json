@@ -1,0 +1,15 @@
+{
+  "identifier": "default",
+  "description": "Default capabilities for Free Proxy",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:default",
+    "core:window:allow-close",
+    "core:window:allow-hide",
+    "core:window:allow-show",
+    "shell:allow-spawn",
+    "shell:allow-execute",
+    "shell:default"
+  ]
+}
