@@ -6,7 +6,7 @@ use crate::model::proxy::MihomoStatus;
 use crate::utils::paths;
 
 #[tauri::command]
-pub fn start_proxy(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+pub async fn start_proxy(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let mihomo_dir = paths::mihomo_dir(&app);
     let config = state.config.lock().unwrap().clone();
     let subs = state.subscriptions.lock().unwrap().clone();
@@ -17,10 +17,15 @@ pub fn start_proxy(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<
 
     state.mihomo.start(&app, &mihomo_dir)?;
 
-    // Wait briefly for mihomo to start
-    std::thread::sleep(std::time::Duration::from_secs(1));
+    for _ in 0..20 {
+        if state.mihomo.health_check().await {
+            return Ok(());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
 
-    Ok(())
+    state.mihomo.stop().ok();
+    Err("mihomo started but controller did not become ready on 127.0.0.1:9090".to_string())
 }
 
 #[tauri::command]

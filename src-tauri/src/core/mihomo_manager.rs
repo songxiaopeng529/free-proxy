@@ -1,12 +1,10 @@
+use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
-use tauri::Emitter;
-use tauri_plugin_shell::ShellExt;
-use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 
 use crate::model::proxy::MihomoStatus;
 
 pub struct MihomoManager {
-    child: Mutex<Option<CommandChild>>,
+    child: Mutex<Option<Child>>,
     pub controller_port: u16,
     pub mixed_port: u16,
     pub secret: String,
@@ -34,33 +32,19 @@ impl MihomoManager {
             .ok_or("invalid mihomo dir path")?
             .to_string();
 
-        let (mut rx, child) = app
-            .shell()
-            .sidecar("mihomo")
-            .map_err(|e| format!("failed to create sidecar command: {}", e))?
-            .args(["-d", &dir_str])
-            .spawn()
-            .map_err(|e| format!("failed to spawn mihomo: {}", e))?;
+        let binary_path = resolve_mihomo_path(app)?;
+        eprintln!("[mihomo] binary: {}", binary_path);
+        eprintln!("[mihomo] data dir: {}", dir_str);
 
-        let app_handle = app.clone();
-        tauri::async_runtime::spawn(async move {
-            while let Some(event) = rx.recv().await {
-                match event {
-                    CommandEvent::Stdout(line) => {
-                        log::info!("[mihomo] {}", String::from_utf8_lossy(&line));
-                    }
-                    CommandEvent::Stderr(line) => {
-                        log::warn!("[mihomo] {}", String::from_utf8_lossy(&line));
-                    }
-                    CommandEvent::Terminated(payload) => {
-                        log::info!("[mihomo] terminated: {:?}", payload);
-                        app_handle.emit("mihomo://status-change", false).ok();
-                        break;
-                    }
-                    _ => {}
-                }
-            }
-        });
+        let child = Command::new(&binary_path)
+            .args(["-d", &dir_str])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("failed to spawn mihomo at {}: {}", binary_path, e))?;
+
+        let pid = child.id();
+        eprintln!("[mihomo] spawned with pid {}", pid);
 
         *self.child.lock().unwrap() = Some(child);
         *self.running.lock().unwrap() = true;
@@ -70,8 +54,9 @@ impl MihomoManager {
 
     pub fn stop(&self) -> Result<(), String> {
         let mut child_lock = self.child.lock().unwrap();
-        if let Some(child) = child_lock.take() {
-            child.kill().map_err(|e| format!("failed to kill mihomo: {}", e))?;
+        if let Some(mut child) = child_lock.take() {
+            child.kill().ok();
+            child.wait().ok();
         }
         *self.running.lock().unwrap() = false;
         Ok(())
@@ -133,14 +118,69 @@ impl MihomoManager {
                     }
                 }
             }
-            Err(_) => MihomoStatus {
-                running,
-                version: None,
-            },
+            Err(_) => {
+                // mihomo is not responding, mark as not running
+                *self.running.lock().unwrap() = false;
+                MihomoStatus {
+                    running: false,
+                    version: None,
+                }
+            }
         }
     }
 
     pub fn is_running(&self) -> bool {
         *self.running.lock().unwrap()
     }
+}
+
+fn resolve_mihomo_path(app: &tauri::AppHandle) -> Result<String, String> {
+    use tauri::Manager;
+
+    let mut searched = Vec::new();
+
+    let resource_dir = app.path().resource_dir()
+        .map_err(|e| format!("failed to get resource dir: {}", e))?;
+
+    let bundle_path = resource_dir.join("binaries").join("mihomo");
+    searched.push(bundle_path.display().to_string());
+    if bundle_path.exists() {
+        return Ok(bundle_path.to_string_lossy().to_string());
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    let triple_name = "mihomo-aarch64-apple-darwin";
+    #[cfg(target_arch = "x86_64")]
+    let triple_name = "mihomo-x86_64-apple-darwin";
+
+    let triple_path = resource_dir.join("binaries").join(triple_name);
+    searched.push(triple_path.display().to_string());
+    if triple_path.exists() {
+        return Ok(triple_path.to_string_lossy().to_string());
+    }
+
+    let dev_dir = std::env::current_dir().unwrap_or_default();
+    let exe_dir = std::env::current_exe()
+        .map(|p| p.parent().unwrap_or(p.as_path()).to_path_buf())
+        .unwrap_or_default();
+
+    for base in [&dev_dir, &exe_dir] {
+        let dev_path = base.join("binaries").join(triple_name);
+        searched.push(dev_path.display().to_string());
+        if dev_path.exists() {
+            return Ok(dev_path.to_string_lossy().to_string());
+        }
+    }
+
+    let src_tauri = dev_dir.join("src-tauri").join("binaries");
+    let fallback = src_tauri.join(triple_name);
+    searched.push(fallback.display().to_string());
+    if fallback.exists() {
+        return Ok(fallback.to_string_lossy().to_string());
+    }
+
+    Err(format!(
+        "mihomo binary not found. Searched paths:\n{}",
+        searched.join("\n")
+    ))
 }

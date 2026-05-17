@@ -34,7 +34,7 @@ pub fn enable_system_proxy(port: u16) -> Result<(), String> {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            log::warn!("networksetup {:?} failed: {}", args, stderr);
+            return Err(format!("networksetup {:?} failed: {}", args, stderr.trim()));
         }
     }
 
@@ -58,7 +58,7 @@ pub fn disable_system_proxy() -> Result<(), String> {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            log::warn!("networksetup {:?} failed: {}", args, stderr);
+            return Err(format!("networksetup {:?} failed: {}", args, stderr.trim()));
         }
     }
 

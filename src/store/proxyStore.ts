@@ -30,7 +30,11 @@ export const useProxyStore = create<ProxyState>((set, get) => ({
     set({ loading: true });
     try {
       if (enabled) {
-        await commands.disableSystemProxy();
+        try {
+          await commands.disableSystemProxy();
+        } catch (e) {
+          console.warn("disableSystemProxy failed:", e);
+        }
         await commands.stopProxy();
         set({ enabled: false, coreStatus: "stopped", groups: [] });
       } else {
@@ -38,7 +42,11 @@ export const useProxyStore = create<ProxyState>((set, get) => ({
         await commands.startProxy();
         const config = await commands.getAppConfig();
         setSecret(config.secret);
-        await commands.enableSystemProxy();
+        try {
+          await commands.enableSystemProxy();
+        } catch (e) {
+          console.warn("enableSystemProxy failed:", e);
+        }
         set({ enabled: true, coreStatus: "running", mode: config.mode });
         await get().fetchNodes();
       }

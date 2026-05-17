@@ -13,7 +13,7 @@ interface SubscriptionState {
   updateAll: () => Promise<void>;
 }
 
-export const useSubscriptionStore = create<SubscriptionState>((set, get) => ({
+export const useSubscriptionStore = create<SubscriptionState>((set) => ({
   subscriptions: [],
   loading: false,
 
